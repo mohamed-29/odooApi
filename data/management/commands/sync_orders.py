@@ -81,40 +81,55 @@ class XYApiClient:
     def query_orders(self, start: str, end: str, page_num=1, page_size=100, shbh=None, userid=None):
         """
         Returns (rows, total).
+        Raises Exception if all retries fail.
         """
-        if not self.authenticate():
-            time.sleep(5*60)
-            return [], 0
-        url = f"{self.BASE_URL}/service-order/ddxx/queryDdxx"
-        payload = {
-            "jyz": -1, "ycd": -1, "orderBy": "cjsj desc",
-            "pageNum": page_num, "pageSize": page_size,
-            "shmc": "", "zjzt": "", "ywlx": "", "queryType": 0,
-            "dsfshdh": "", "dsfjybh": "", "zfzt": "", "zffs": "", "zfzh": "",
-            "chzt": "", "starttime": start, "endtime": end,
-            "spxx": "", "language": "en", "channel": "1",
-        }
-        if shbh:   # <— NEW
-            payload["shbh"] = shbh
-        if userid: # <— NEW (some installs need it)
-            payload["userid"] = userid
-        try:
-            r = self.session.post(url, json=payload, timeout=30)
-            r.raise_for_status()
-            data = r.json() or {}
-            if data.get("code") != "H0000":
-                self.logger(f"[ORDERS] API error: {data.get('msg')} (code={data.get('code')})")
-                return [], 0
+        max_retries = 5
+        base_delay = 5  # seconds
+        
+        for attempt in range(1, max_retries + 1):
+            if not self.authenticate():
+                self.logger(f"[ORDERS] Auth failed, retrying... ({attempt}/{max_retries})")
+                time.sleep(base_delay * attempt)
+                continue
+                
+            url = f"{self.BASE_URL}/service-order/ddxx/queryDdxx"
+            payload = {
+                "jyz": -1, "ycd": -1, "orderBy": "cjsj desc",
+                "pageNum": page_num, "pageSize": page_size,
+                "shmc": "", "zjzt": "", "ywlx": "", "queryType": 0,
+                "dsfshdh": "", "dsfjybh": "", "zfzt": "", "zffs": "", "zfzh": "",
+                "chzt": "", "starttime": start, "endtime": end,
+                "spxx": "", "language": "en", "channel": "1",
+            }
+            if shbh:
+                payload["shbh"] = shbh
+            if userid:
+                payload["userid"] = userid
+                
+            try:
+                r = self.session.post(url, json=payload, timeout=60)
+                r.raise_for_status()
+                data = r.json() or {}
+                
+                if data.get("code") != "H0000":
+                    msg = data.get("msg")
+                    code = data.get("code")
+                    self.logger(f"[ORDERS] API error: {msg} (code={code}). Retrying... ({attempt}/{max_retries})")
+                    time.sleep(base_delay * attempt)
+                    continue
 
-            block = data.get("data") or {}
-            rows = block.get("data") or block.get("list") or []
-            total = block.get("total") or len(rows)
-            # drop summary row "本页小计"
-            rows = [r for r in rows if r.get("shmc") != "本页小计"]
-            return rows, int(total)
-        except Exception as e:
-            self.logger(f"[ORDERS] Request failed: {e}")
-            return [], 0
+                block = data.get("data") or {}
+                rows = block.get("data") or block.get("list") or []
+                total = block.get("total") or len(rows)
+                # drop summary row ""
+                rows = [r for r in rows if r.get("shmc") != "本页小计"]
+                return rows, int(total)
+
+            except Exception as e:
+                self.logger(f"[ORDERS] Request failed: {e}. Retrying... ({attempt}/{max_retries})")
+                time.sleep(base_delay * attempt)
+        
+        raise Exception(f"Failed to query orders after {max_retries} attempts")
 
 
 # -----------------------------
@@ -362,7 +377,12 @@ class Command(BaseCommand):
 
                 page = 1
                 while True:
-                    rows, total = client.query_orders(s, e, page_num=page, page_size=page_size, shbh=acc_shbh, userid=acc_userid)
+                    try:
+                        rows, total = client.query_orders(s, e, page_num=page, page_size=page_size, shbh=acc_shbh, userid=acc_userid)
+                    except Exception as err:
+                        log(f"[CHUNK ERR] {err}. Moving to next chunk/cycle.")
+                        break # Stop pagination for this chunk if we fully fail, move to next
+
                     log(f"[PAGE] page={page} got={len(rows)} total={total}")
                     if rows:
                         log(f"       first uuid={rows[0].get('uuid')} jqbh={rows[0].get('jqbh')} zfsj={rows[0].get('zfsj')}")
