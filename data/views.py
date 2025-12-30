@@ -34,7 +34,6 @@ class TotalSalesView(APIView):
                 machine__number=machine_number,
                 payment_time__date__gte=start_date,
                 payment_time__date__lte=end_date,
-                payment_status='paid' # Filter for paid orders? Assuming yes.
             ).aggregate(total_sales=Sum('payment_amount'))
 
             total = sales['total_sales'] or 0.00
