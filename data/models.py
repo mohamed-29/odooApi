@@ -40,7 +40,7 @@ class Order(models.Model):
     # ---- Business fields ----
     machine = models.ForeignKey(machine, on_delete=models.SET_NULL, null=True, blank=True)
     product_name = models.CharField(max_length=255, default="Unknown")
-    slot_number = models.CharField(max_length=50, null=True, blank=True)
+    slot_number = models.CharField(max_length=255, null=True, blank=True)
     payment_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     payment_time = models.DateTimeField(db_index=True)
     payment_type = models.CharField(max_length=20, null=True, blank=True)
